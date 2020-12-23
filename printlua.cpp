@@ -1,8 +1,7 @@
-#include "print.h"
 #include <iostream>
 #include <lua/lua.hpp>
 
-void printlua(lua_State* L, const std::string& tag)
+void printLua(lua_State* L, const std::string& tag)
 {
     if (!tag.empty())
     {
@@ -44,13 +43,13 @@ void printlua(lua_State* L, const std::string& tag)
             {
                 printf("thread\n");
             }
-            else if (lua_isstring(L, stackIndex))
-            {
-                printf("string\n");
-            }
             else if (lua_isnumber(L, stackIndex))
             {
                 printf("number\n");
+            }
+            else if (lua_isstring(L, stackIndex))
+            {
+                printf("string\n");
             }
             else if (lua_isnone(L, stackIndex))
             {
