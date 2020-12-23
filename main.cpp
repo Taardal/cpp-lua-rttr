@@ -4,14 +4,26 @@
 
 extern void printLua(lua_State* L, const std::string& tag);
 
-void TargetFunction(int x, int y)
+void HelloWorld()
 {
-    printf("Hello World from LUA (%d, %d)", x, y);
+    printf("Hello World from LUA\n");
+}
+
+void HelloWorld2(int x, int y)
+{
+    printf("Hello World from LUA (%d, %d)\n", x, y);
+}
+
+int Add(int a, int b)
+{
+    return a + b;
 }
 
 RTTR_REGISTRATION
 {
-    rttr::registration::method("TargetFunction", &TargetFunction);
+    rttr::registration::method("HelloWorld", &HelloWorld);
+    rttr::registration::method("HelloWorld2", &HelloWorld2);
+    rttr::registration::method("Add", &Add);
 }
 
 union ArgumentValue
@@ -29,7 +41,7 @@ int GetArgumentCount(lua_State* L, const rttr::array_range<rttr::parameter_info>
     int nativeArgumentCount = parameterInfos.size();
     if (luaArgumentCount != nativeArgumentCount)
     {
-        printf("lua vs. native argument count mismatch [%d != %d]\n", luaArgumentCount, nativeArgumentCount);
+        luaL_error(L, "lua vs. native argument count mismatch [%d != %d]\n", luaArgumentCount, nativeArgumentCount);
         assert(false);
     }
     return luaArgumentCount;
@@ -71,7 +83,7 @@ std::vector<rttr::argument> GetArguments(lua_State* L, rttr::method* method)
             }
             else
             {
-                printf("unknown rttr type [%s] for lua number\n", nativeArgumentType.get_name().to_string().c_str());
+                luaL_error(L, "unknown rttr type [%s] for lua number\n", nativeArgumentType.get_name().to_string().c_str());
             }
         }
         else if (luaType == LUA_TSTRING)
@@ -81,7 +93,7 @@ std::vector<rttr::argument> GetArguments(lua_State* L, rttr::method* method)
         }
         else
         {
-            printf("unknown lua type [%d]\n", luaType);
+            luaL_error(L, "unknown lua type [%d]\n", luaType);
         }
     }
     return arguments;
@@ -93,12 +105,27 @@ int LuaFunction(lua_State* L)
     std::vector<rttr::argument> arguments = GetArguments(L, method);
     rttr::instance instance = {};
     rttr::variant result = method->invoke_variadic(instance, arguments);
+    int returnValueCount = 0;
     if (!result.is_valid())
     {
-        printf("unable to call method [%s]\n", method->get_name().to_string().c_str());
+        luaL_error(L, "unable to call method [%s]\n", method->get_name().to_string().c_str());
         assert(false);
     }
-    return 0;
+    else if (!result.is_type<void>())
+    {
+        if (result.is_type<int>())
+        {
+            lua_pushnumber(L, result.get_value<int>());
+            returnValueCount++;
+        }
+        else
+        {
+            const std::string& methodName = method->get_name().to_string();
+            const std::string& returnTypeName = result.get_type().get_name().to_string();
+            luaL_error(L, "unsupported return type [%s] from native method [%s]\n", returnTypeName.c_str(), methodName.c_str());
+        }
+    }
+    return returnValueCount;
 }
 
 int main()
@@ -109,7 +136,6 @@ int main()
     lua_pushvalue(L, -1);
     lua_setglobal(L, "Global");
 
-    lua_pushvalue(L, -1);
     for (const rttr::method& method : rttr::type::get_global_methods())
     {
         lua_pushstring(L, method.get_name().to_string().c_str());
@@ -120,12 +146,15 @@ int main()
     }
 
     const char* script = R"(
-        Global.TargetFunction(66, 99)
+        Global.HelloWorld()
+        Global.HelloWorld2(66, 99)
+        local a = Global.Add(5, 6)
+        Global.HelloWorld2(66 + a, 99)
     )";
 
     if (luaL_dostring(L, script) != LUA_OK)
     {
-        printf( "Error: %s\n", lua_tostring( L, -1 ) );
+        printf("Error: %s\n", lua_tostring(L, -1));
     }
 
     return 0;
