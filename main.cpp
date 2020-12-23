@@ -1,8 +1,9 @@
+#include "print.h"
 #include <iostream>
 #include <lua/lua.hpp>
 #include <rttr/registration>
 
-static void f()
+void f()
 {
     std::cout << "Hello World RTTR" << std::endl;
 }
