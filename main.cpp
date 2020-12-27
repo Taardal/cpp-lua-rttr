@@ -37,7 +37,7 @@ public:
     {
         x += distanceX;
         y += distanceY;
-        printf("--- Moved sprite by [%dx, %dy] to [%dx, %dy]\n", distanceX, distanceY, x, y, x + y);
+        printf("--- Moved sprite by [%dx, %dy] to [%dx, %dy]\n", distanceX, distanceY, x, y);
         return x + y;
     }
 
@@ -67,6 +67,30 @@ union ArgumentValue
     double doubleValue;
     const char* stringValue;
 };
+
+int PutOnLuaStack(lua_State* L, const rttr::variant& variant)
+{
+    const std::string& typeName = variant.get_type().get_name().to_string();
+    printf("putting value of type [%s] on lua stack\n", typeName.c_str());
+    
+    int returnValueCount = 0;
+    if (!variant.is_type<void>())
+    {
+        if (variant.is_type<int>())
+        {
+            int value = variant.get_value<int>();
+            printf("pushing [%d] onto lua stack\n", value);
+            lua_pushnumber(L, value);
+            returnValueCount++;
+        }
+        else
+        {
+            luaL_error(L, "could not put value of unsupported type [%s] on lua stack\n", typeName.c_str());
+        }
+    }
+    printf("put [%d] values of type [%s] on lua stack\n", returnValueCount, typeName.c_str());
+    return returnValueCount;
+}
 
 int GetMethodArgumentCount(lua_State* L, const rttr::array_range<rttr::parameter_info>& argumentInfos)
 {
@@ -168,19 +192,7 @@ int InvokeMethod(lua_State* L, const rttr::method& method, const rttr::instance&
     const std::string& returnTypeName = result.get_type().get_name().to_string();
     printf("return type from method [%s] is [%s]\n", methodName.c_str(), returnTypeName.c_str());
 
-    int returnValueCount = 0;
-    if (!result.is_type<void>())
-    {
-        if (result.is_type<int>())
-        {
-            lua_pushnumber(L, result.get_value<int>());
-            returnValueCount++;
-        }
-        else
-        {
-            luaL_error(L, "unsupported return type [%s] from method [%s]\n", returnTypeName.c_str(), methodName.c_str());
-        }
-    }
+    int returnValueCount = PutOnLuaStack(L, result);
     printf("returning [%d] values of type [%s] from method [%s]\n", returnValueCount, returnTypeName.c_str(), methodName.c_str());
     return returnValueCount;
 }
@@ -302,7 +314,16 @@ int IndexType(lua_State* L)
     const rttr::property& property = type.get_property(key);
     if (property.is_valid())
     {
-        printf("INCOMPLETE! index property on type [%s] by key [%s]\n", typeName, key);
+        const std::string& propertyName = property.get_name().to_string();
+        printf("found property [%s] to read from type [%s]\n", propertyName.c_str(), typeName);
+
+        constexpr int bottomOfLuaStackIndex = 1;
+        const rttr::variant& instance = *(rttr::variant*) lua_touserdata(L, bottomOfLuaStackIndex);
+        const rttr::variant& propertyValue = property.get_value(instance);
+        const std::string& propertyValueType = propertyValue.get_type().get_name().to_string();
+        printf("reading property [%s] of type [%s] from type [%s]\n", propertyName.c_str(), propertyValueType.c_str(), typeName);
+
+        return PutOnLuaStack(L, propertyValue);
     }
 
     luaL_error(L, "could not index type [%s] by key [%s]", typeName, key);
@@ -370,6 +391,9 @@ int main()
 
         local distance = sprite:Move(3, 4)
         sprite:Move(distance, 12)
+
+        local x = sprite.x
+        sprite:Move(x, 10)
     )";
 
     if (luaL_dostring(L, script) != LUA_OK)
