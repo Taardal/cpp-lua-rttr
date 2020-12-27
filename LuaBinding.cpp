@@ -34,7 +34,6 @@ int LuaBinding::InvokeGlobalMethod(lua_State* L)
     if (!result.is_valid())
     {
         luaL_error(L, "could not invoke method [%s] with [%d] arguments\n", methodName.c_str(), (int) arguments.size());
-        assert(false);
     }
     printf("invoked global method [%s] with [%d] arguments\n", methodName.c_str(), (int) arguments.size());
 
@@ -74,10 +73,11 @@ std::vector<rttr::argument> LuaBinding::GetMethodArguments(lua_State* L, const r
     {
         int luaIndex = i + 1;
         int luaType = lua_type(L, luaIndex);
-        const std::string& luaTypeName = GetLuaTypeName(luaType);
         const rttr::type argumentType = argumentInfoIterator->get_type();
+
+        const char* luaTypeName = lua_typename(L, luaType);
         const std::string& argumentTypeName = argumentType.get_name().to_string();
-        printf("parsing argument on lua index [%d] of lua type [%s] and native type [%s]\n", luaIndex, luaTypeName.c_str(), argumentTypeName.c_str());
+        printf("parsing argument on lua index [%d] of lua type [%s] and native type [%s]\n", luaIndex, luaTypeName, argumentTypeName.c_str());
 
         if (luaType == LUA_TNUMBER)
         {
@@ -103,8 +103,7 @@ std::vector<rttr::argument> LuaBinding::GetMethodArguments(lua_State* L, const r
             }
             else
             {
-                luaL_error(L, "unknown native type [%s] for lua type [%s]\n", argumentTypeName.c_str(), luaTypeName.c_str());
-                assert(false);
+                luaL_error(L, "unknown native type [%s] for lua type [%s]\n", argumentTypeName.c_str(), luaTypeName);
             }
         }
         else if (luaType == LUA_TSTRING)
@@ -114,8 +113,7 @@ std::vector<rttr::argument> LuaBinding::GetMethodArguments(lua_State* L, const r
         }
         else
         {
-            luaL_error(L, "unknown lua type [%s]\n", luaTypeName.c_str());
-            assert(false);
+            luaL_error(L, "unknown lua type [%s]\n", luaTypeName);
         }
     }
 
@@ -130,20 +128,6 @@ int LuaBinding::GetMethodArgumentCount(lua_State* L, const rttr::array_range<rtt
     if (luaArgumentCount != nativeArgumentCount)
     {
         luaL_error(L, "lua vs. native argument count mismatch [%d != %d]\n", luaArgumentCount, nativeArgumentCount);
-        assert(false);
     }
     return luaArgumentCount;
-}
-
-std::string LuaBinding::GetLuaTypeName(int luaType)
-{
-    switch (luaType)
-    {
-        case LUA_TNUMBER:
-            return "LUA_TNUMBER";
-        case LUA_TSTRING:
-            return "LUA_TSTRING";
-        default:
-            return "UNKNOWN";
-    }
 }

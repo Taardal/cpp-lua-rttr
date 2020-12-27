@@ -29,6 +29,4 @@ private:
     static std::vector<rttr::argument> GetMethodArguments(lua_State* L, const rttr::method& method);
 
     static int GetMethodArgumentCount(lua_State* L, const rttr::array_range<rttr::parameter_info>& argumentInfos);
-
-    static std::string GetLuaTypeName(int luaType);
 };

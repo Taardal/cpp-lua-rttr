@@ -7,12 +7,12 @@ extern void printLua(lua_State* L, const std::string& tag);
 
 void HelloWorld()
 {
-    printf("Hello World from LUA\n");
+    printf("--- Hello World from LUA\n");
 }
 
 void HelloWorldWithArguments(int x, int y)
 {
-    printf("Hello World from LUA (%d, %d)\n", x, y);
+    printf("--- Hello World from LUA (%d, %d)\n", x, y);
 }
 
 class Sprite
@@ -25,22 +25,25 @@ public:
             : x(0),
               y(0)
     {
-        printf("created sprite...\n");
+        printf("--- Created sprite\n");
     }
 
     ~Sprite()
     {
-        printf("destroyed sprite...\n");
+        printf("--- Destroyed sprite\n");
     }
 
-    void Update()
+    int Move(int distanceX, int distanceY)
     {
-        printf("updated sprite...\n");
+        x += distanceX;
+        y += distanceY;
+        printf("--- Moved sprite by [%dx, %dy] to [%dx, %dy]\n", distanceX, distanceY, x, y, x + y);
+        return x + y;
     }
 
     void Draw()
     {
-        printf("drawed sprite...\n");
+        printf("--- Drawed sprite\n");
     }
 };
 
@@ -50,10 +53,148 @@ RTTR_REGISTRATION
     rttr::registration::method("HelloWorldWithArguments", &HelloWorldWithArguments);
     rttr::registration::class_<Sprite>("Sprite")
             .constructor()
-            .method("Update", &Sprite::Update)
+            .method("Move", &Sprite::Move)
             .method("Draw", &Sprite::Draw)
             .property("x", &Sprite::x)
             .property("y", &Sprite::y);
+}
+
+union ArgumentValue
+{
+    int intValue;
+    long longValue;
+    float floatValue;
+    double doubleValue;
+    const char* stringValue;
+};
+
+int GetMethodArgumentCount(lua_State* L, const rttr::array_range<rttr::parameter_info>& argumentInfos)
+{
+    int luaArgumentCount = 0;
+    for (int i = lua_gettop(L); i > 0; i--)
+    {
+        if (lua_isuserdata(L, i))
+        {
+            break;
+        }
+        luaArgumentCount++;
+    }
+    int nativeArgumentCount = argumentInfos.size();
+    if (luaArgumentCount != nativeArgumentCount)
+    {
+        luaL_error(L, "lua vs. native argument count mismatch [%d != %d]\n", luaArgumentCount, nativeArgumentCount);
+    }
+    return luaArgumentCount;
+}
+
+int InvokeMethod(lua_State* L, const rttr::method& method, const rttr::instance& instance)
+{
+    const std::string& methodName = method.get_name().to_string();
+    printf("getting arguments for method [%s]\n", methodName.c_str());
+
+    const rttr::array_range<rttr::parameter_info>& argumentInfos = method.get_parameter_infos();
+    int argumentCount = GetMethodArgumentCount(L, argumentInfos);
+    printf("getting [%d] arguments for method [%s]\n", argumentCount, methodName.c_str());
+
+    std::vector<ArgumentValue> argumentValues(argumentCount);
+    std::vector<rttr::argument> arguments(argumentCount);
+    auto argumentInfoIterator = argumentInfos.begin();
+    for (int i = 0; i < argumentCount; i++, argumentInfoIterator++)
+    {
+        int luaIndex = lua_gettop(L) - i;
+        int luaType = lua_type(L, luaIndex);
+        const rttr::type& argumentType = argumentInfoIterator->get_type();
+
+        const char* luaTypeName = lua_typename(L, luaType);
+        const std::string& argumentTypeName = argumentType.get_name().to_string();
+        printf("parsing argument on lua index [%d] of lua type [%s] and native type [%s]\n", luaIndex, luaTypeName, argumentTypeName.c_str());
+
+        if (luaType == LUA_TNUMBER)
+        {
+            if (argumentType == rttr::type::get<int>())
+            {
+                auto intValue = (int) lua_tonumber(L, luaIndex);
+                printf("parsed int [%d]\n", intValue);
+                argumentValues[i].intValue = intValue;
+                arguments[i] = argumentValues[i].intValue;
+            }
+            else if (argumentType == rttr::type::get<long>())
+            {
+                auto longValue = (long) lua_tonumber(L, luaIndex);
+                printf("parsed long [%ld]\n", longValue);
+                argumentValues[i].longValue = longValue;
+                arguments[i] = argumentValues[i].longValue;
+            }
+            else if (argumentType == rttr::type::get<float>())
+            {
+                auto floatValue = (float) lua_tonumber(L, luaIndex);
+                printf("parsed float [%f]\n", floatValue);
+                argumentValues[i].floatValue = floatValue;
+                arguments[i] = argumentValues[i].floatValue;
+            }
+            else if (argumentType == rttr::type::get<double>())
+            {
+                auto doubleValue = (double) lua_tonumber(L, luaIndex);
+                printf("parsed double [%f]\n", doubleValue);
+                argumentValues[i].doubleValue = doubleValue;
+                arguments[i] = argumentValues[i].doubleValue;
+            }
+            else
+            {
+                luaL_error(L, "unknown native type [%s] for lua type [%s]\n", argumentTypeName.c_str(), luaTypeName);
+            }
+        }
+        else if (luaType == LUA_TSTRING)
+        {
+            const char* stringValue = lua_tostring(L, luaIndex);
+            printf("parsed string [%s]\n", stringValue);
+            argumentValues[i].stringValue = stringValue;
+            arguments[i] = argumentValues[i].stringValue;
+        }
+        else
+        {
+            luaL_error(L, "unknown lua type [%s]\n", luaTypeName);
+        }
+    }
+    std::reverse(arguments.begin(), arguments.end());
+
+    const rttr::variant& result = method.invoke_variadic(instance, arguments);
+    if (!result.is_valid())
+    {
+        luaL_error(L, "could not invoke method [%s] with [%d] arguments\n", methodName.c_str(), (int) arguments.size());
+    }
+    printf("invoked method [%s] with [%d] arguments\n", methodName.c_str(), (int) arguments.size());
+
+    const std::string& returnTypeName = result.get_type().get_name().to_string();
+    printf("return type from method [%s] is [%s]\n", methodName.c_str(), returnTypeName.c_str());
+
+    int returnValueCount = 0;
+    if (!result.is_type<void>())
+    {
+        if (result.is_type<int>())
+        {
+            lua_pushnumber(L, result.get_value<int>());
+            returnValueCount++;
+        }
+        else
+        {
+            luaL_error(L, "unsupported return type [%s] from method [%s]\n", returnTypeName.c_str(), methodName.c_str());
+        }
+    }
+    printf("returning [%d] values of type [%s] from method [%s]\n", returnValueCount, returnTypeName.c_str(), methodName.c_str());
+    return returnValueCount;
+}
+
+int InvokeGlobalMethod(lua_State* L)
+{
+    printf("invoking global method from lua\n");
+
+    const auto& method = *(rttr::method*) lua_touserdata(L, lua_upvalueindex(1));
+    const std::string& methodName = method.get_name().to_string();
+    printf("invoking global method [%s]\n", methodName.c_str());
+
+    const rttr::instance& instance = {};
+    return InvokeMethod(L, method, instance);
 }
 
 std::string GetMetatableName(const rttr::type& type)
@@ -65,23 +206,23 @@ int CreateType(lua_State* L)
 {
     printf("creating native type from lua\n");
 
-    auto* type = (rttr::type*) lua_touserdata(L, lua_upvalueindex(1));
-    const std::string& typeName = type->get_name().to_string();
+    const auto& type = *(rttr::type*) lua_touserdata(L, lua_upvalueindex(1));
+    const std::string& typeName = type.get_name().to_string();
     printf("creating type [%s]\n", typeName.c_str());
     
     void* userData = lua_newuserdata(L, sizeof(rttr::variant));
-    new(userData) rttr::variant(type->create());
+    new(userData) rttr::variant(type.create());
     int userdataIndex = lua_gettop(L);
-    printf("created userdata on index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
+    printf("created userdata on lua index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
 
-    const std::string& metatableName = GetMetatableName(*type);
+    const std::string& metatableName = GetMetatableName(type);
     luaL_getmetatable(L, metatableName.c_str());
     lua_setmetatable(L, userdataIndex);
-    printf("bound metatable [%s] to userdata on index [%d] for type [%s]\n", metatableName.c_str(), userdataIndex, typeName.c_str());
+    printf("bound metatable [%s] to userdata on lua index [%d] for type [%s]\n", metatableName.c_str(), userdataIndex, typeName.c_str());
 
     lua_newtable(L);
     lua_setuservalue(L, userdataIndex);
-    printf("bound a new table to userdata on index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
+    printf("bound a new table to userdata on lua index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
 
     constexpr int createdCount = 1;
     return createdCount;
@@ -90,9 +231,9 @@ int CreateType(lua_State* L)
 int DestroyType(lua_State* L)
 {
     printf("destroying native type from lua\n");
-    auto* variant = (rttr::variant*) lua_touserdata(L, -1);
-    variant->~variant();
-    printf("destroyed native type [%s]\n", variant->get_type().get_name().to_string().c_str());
+    const auto& variant = *(rttr::variant*) lua_touserdata(L, -1);
+    variant.~variant();
+    printf("destroyed native type [%s]\n", variant.get_type().get_name().to_string().c_str());
     return 0;
 }
 
@@ -104,23 +245,18 @@ int InvokeMethodOnType(lua_State* L)
     const std::string& methodName = method.get_name().to_string();
     printf("invoking method [%s] on type\n", methodName.c_str());
 
-    int userdataIndex = lua_gettop(L);
+    constexpr int bottomOfLuaStackIndex = 1;
+    int userdataIndex = bottomOfLuaStackIndex;
     if (!lua_isuserdata(L, userdataIndex))
     {
-        luaL_error(L, "expected userdata on stack index [%d] when invoking method [%s] type\n", userdataIndex, methodName.c_str());
-        assert(false);
+        luaL_error(L, "expected userdata on lua index [%d] when invoking method [%s] on type\n", userdataIndex, methodName.c_str());
     }
-    auto& variant = *(rttr::variant*) lua_touserdata(L, userdataIndex);
+    const auto& variant = *(rttr::variant*) lua_touserdata(L, userdataIndex);
     const std::string& typeName = variant.get_type().get_name().to_string();
     printf("invoking method [%s] on type [%s]\n", methodName.c_str(), typeName.c_str());
 
-    rttr::variant result = method.invoke(variant);
-    if (!result.is_valid())
-    {
-        luaL_error(L, "could not invoke method [%s] on type [%s]\n", methodName.c_str(), typeName.c_str());
-        assert(false);
-    }
-    return 0;
+    rttr::instance instance(variant);
+    return InvokeMethod(L, method, instance);
 }
 
 int IndexType(lua_State* L)
@@ -134,14 +270,12 @@ int IndexType(lua_State* L)
     int keyIndex = lua_gettop(L);
     if (!lua_isstring(L, keyIndex))
     {
-        luaL_error(L, "expected name of a native property or method on stack index [%d] when indexing type [%s]\n", keyIndex, typeName);
-        assert(false);
+        luaL_error(L, "expected name of a native property or method on lua index [%d] when indexing type [%s]\n", keyIndex, typeName);
     }
     int userdataIndex = keyIndex - 1;
     if (!lua_isuserdata(L, userdataIndex))
     {
-        luaL_error(L, "expected userdata on stack index [%d] when indexing type [%s]\n", userdataIndex, typeName);
-        assert(false);
+        luaL_error(L, "expected userdata on lua index [%d] when indexing type [%s]\n", userdataIndex, typeName);
     }
 
     const char* key = lua_tostring(L, keyIndex);
@@ -155,11 +289,11 @@ int IndexType(lua_State* L)
 
         void* methodUserdata = lua_newuserdata(L, sizeof(rttr::method));
         new (methodUserdata) rttr::method(method);
-        printf("created userdata for method [%s] to invoke on type [%s]\n", methodName.c_str(), typeName);
+        printf("created userdata for method [%s] to be invoked on type [%s]\n", methodName.c_str(), typeName);
 
         constexpr int upvalueCount = 1;
         lua_pushcclosure(L, InvokeMethodOnType, upvalueCount);
-        printf("returning closure with method [%s] to invoke on type [%s] as upvalue\n", methodName.c_str(), typeName);
+        printf("returning closure with method [%s] to be invoked on type [%s] as upvalue\n", methodName.c_str(), typeName);
 
         constexpr int methodCount = 1;
         return methodCount;
@@ -179,8 +313,17 @@ int main()
 {
     lua_State* L = luaL_newstate();
 
-    LuaBinding luaBinding(L);
-    luaBinding.BindGlobalMethods();
+    lua_newtable(L);
+    lua_pushvalue(L, -1);
+    lua_setglobal(L, "Global");
+    for (const auto& method : rttr::type::get_global_methods())
+    {
+        lua_pushstring(L, method.get_name().to_string().c_str());
+        lua_pushlightuserdata(L, (void*) &method);
+        constexpr int upvalueCount = 1;
+        lua_pushcclosure(L, InvokeGlobalMethod, upvalueCount);
+        lua_settable(L, -3);
+    }
 
     for (const auto& type : rttr::type::get_types())
     {
@@ -219,10 +362,14 @@ int main()
     }
 
     const char* script = R"(
-        --Global.HelloWorld()
-        --Global.HelloWorldWithArguments(66, 99)
+        Global.HelloWorld()
+        Global.HelloWorldWithArguments(66, 99)
+
         local sprite = Sprite.new()
         sprite:Draw()
+
+        local distance = sprite:Move(3, 4)
+        sprite:Move(distance, 12)
     )";
 
     if (luaL_dostring(L, script) != LUA_OK)
