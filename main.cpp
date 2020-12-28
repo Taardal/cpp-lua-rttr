@@ -72,7 +72,7 @@ int PutOnLuaStack(lua_State* L, const rttr::variant& variant)
 {
     const std::string& typeName = variant.get_type().get_name().to_string();
     printf("putting value of type [%s] on lua stack\n", typeName.c_str());
-    
+
     int returnValueCount = 0;
     if (!variant.is_type<void>())
     {
@@ -221,7 +221,7 @@ int CreateType(lua_State* L)
     const auto& type = *(rttr::type*) lua_touserdata(L, lua_upvalueindex(1));
     const std::string& typeName = type.get_name().to_string();
     printf("creating type [%s]\n", typeName.c_str());
-    
+
     void* userData = lua_newuserdata(L, sizeof(rttr::variant));
     new(userData) rttr::variant(type.create());
     int userdataIndex = lua_gettop(L);
@@ -302,7 +302,7 @@ int IndexType(lua_State* L)
         printf("found method [%s] to invoke on type [%s]\n", methodName.c_str(), typeName);
 
         void* methodUserdata = lua_newuserdata(L, sizeof(rttr::method));
-        new (methodUserdata) rttr::method(method);
+        new(methodUserdata) rttr::method(method);
         printf("created userdata for method [%s] to be invoked on type [%s]\n", methodName.c_str(), typeName);
 
         constexpr int upvalueCount = 1;
@@ -364,13 +364,61 @@ int NewIndexType(lua_State* L)
         luaL_error(L, "expected name of a native property or method on lua index [%d] when indexing type [%s]\n", keyIndex, typeName);
     }
 
+    const char* keyName = lua_tostring(L, keyIndex);
+    const rttr::property& property = type.get_property(keyName);
+    if (property.is_valid())
+    {
+        const std::string& propertyName = property.get_name().to_string();
+        printf("found property [%s] to write to on type [%s]\n", propertyName.c_str(), typeName);
+
+        const rttr::variant& instance = *(rttr::variant*) lua_touserdata(L, userdataIndex);
+        const std::string& instanceTypeName = instance.get_type().get_name().to_string();
+        printf("writing to property [%s] on instance of type [%s]\n", propertyName.c_str(), instanceTypeName.c_str());
+
+        int valueLuaType = lua_type(L, valueIndex);
+        const char* valueLuaTypeName = lua_typename(L, valueLuaType);
+        printf("writing value of lua type [%d: %s] to property [%s] on instance of type [%s]\n", valueLuaType, valueLuaTypeName, propertyName.c_str(), instanceTypeName.c_str());
+
+        bool didSetValueOnProperty = false;
+        if (valueLuaType == LUA_TNUMBER)
+        {
+            if (property.get_type() == rttr::type::get<int>())
+            {
+                auto value = (int) lua_tonumber(L, valueIndex);
+                printf("setting value [%d] on property [%s]\n", value, propertyName.c_str());
+                didSetValueOnProperty = property.set_value(instance, value);
+            }
+            else if (property.get_type() == rttr::type::get<short>())
+            {
+                auto value = (short) lua_tonumber(L, valueIndex);
+                printf("setting value [%d] on property [%s]\n", value, propertyName.c_str());
+                didSetValueOnProperty = property.set_value(instance, value);
+            }
+            else
+            {
+                const std::string& propertyTypeName = property.get_type().get_name().to_string();
+                luaL_error(L, "unknown native type [%s] for lua type [%s]\n", propertyTypeName.c_str(), valueLuaTypeName);
+            }
+        }
+        else
+        {
+            luaL_error(L, "unknown lua type [%s]\n", valueLuaTypeName);
+        }
+        if (!didSetValueOnProperty)
+        {
+            luaL_error(L, "could not set value on property [%s] on type [%s]\n", propertyName.c_str(), typeName);
+        }
+        return 0;
+    }
+
+
     printf("getting uservalue (i.e. table) for userdata on index [%d]\n", userdataIndex);
     lua_getuservalue(L, userdataIndex);
 
-    printf("getting key for value in table on index [%d]\n", keyIndex);
+    printf("getting key [%s] for value in table on index [%d]\n", keyName, keyIndex);
     lua_pushvalue(L, keyIndex);
 
-    printf("getting value on key in table on index [%d]\n", valueIndex);
+    printf("getting value for key [%s] in table on index [%d]\n", keyName, valueIndex);
     lua_pushvalue(L, valueIndex);
 
     printf("setting value on index [%d] on key on index [%d] on uservalue (i.e. table) on index [%d]\n", valueIndex, keyIndex, userdataIndex);
@@ -402,7 +450,7 @@ int main()
         if (type.is_class())
         {
             //printf("binding class type [%s] to lua\n", typeName.c_str());
-            
+
             lua_newtable(L);
             lua_pushvalue(L, -1);
             lua_setglobal(L, typeName.c_str());
@@ -417,7 +465,7 @@ int main()
             const std::string& metatableName = GetMetatableName(type);
             luaL_newmetatable(L, metatableName.c_str());
             //printf("created metatable [%s]\n", metatableName.c_str());
-            
+
             lua_pushstring(L, "__gc");
             lua_pushcfunction(L, DestroyType);
             lua_settable(L, -3);
@@ -455,6 +503,9 @@ int main()
         sprite.z = 100
         local z = sprite.z
         sprite:Move(z, 10)
+
+        sprite.x = 0
+        sprite:Move(sprite.x, 10)
     )";
 
     if (luaL_dostring(L, script) != LUA_OK)
