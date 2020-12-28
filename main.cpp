@@ -279,15 +279,17 @@ int IndexType(lua_State* L)
     const rttr::type& type = rttr::type::get_by_name(typeName);
     printf("indexing type [%s]\n", typeName);
 
-    int keyIndex = lua_gettop(L);
-    if (!lua_isstring(L, keyIndex))
-    {
-        luaL_error(L, "expected name of a native property or method on lua index [%d] when indexing type [%s]\n", keyIndex, typeName);
-    }
-    int userdataIndex = keyIndex - 1;
+    constexpr int bottomOfLuaStackIndex = 1;
+    int userdataIndex = bottomOfLuaStackIndex;
+    int keyIndex = userdataIndex + 1;
+
     if (!lua_isuserdata(L, userdataIndex))
     {
         luaL_error(L, "expected userdata on lua index [%d] when indexing type [%s]\n", userdataIndex, typeName);
+    }
+    if (!lua_isstring(L, keyIndex))
+    {
+        luaL_error(L, "expected name of a native property or method on lua index [%d] when indexing type [%s]\n", keyIndex, typeName);
     }
 
     const char* key = lua_tostring(L, keyIndex);
@@ -307,8 +309,8 @@ int IndexType(lua_State* L)
         lua_pushcclosure(L, InvokeMethodOnType, upvalueCount);
         printf("returning closure with method [%s] to be invoked on type [%s] as upvalue\n", methodName.c_str(), typeName);
 
-        constexpr int methodCount = 1;
-        return methodCount;
+        int indexedMethodsCount = 1;
+        return indexedMethodsCount;
     }
 
     const rttr::property& property = type.get_property(key);
@@ -317,17 +319,65 @@ int IndexType(lua_State* L)
         const std::string& propertyName = property.get_name().to_string();
         printf("found property [%s] to read from type [%s]\n", propertyName.c_str(), typeName);
 
-        constexpr int bottomOfLuaStackIndex = 1;
         const rttr::variant& instance = *(rttr::variant*) lua_touserdata(L, bottomOfLuaStackIndex);
         const rttr::variant& propertyValue = property.get_value(instance);
         const std::string& propertyValueType = propertyValue.get_type().get_name().to_string();
         printf("reading property [%s] of type [%s] from type [%s]\n", propertyName.c_str(), propertyValueType.c_str(), typeName);
 
-        return PutOnLuaStack(L, propertyValue);
+        int indexedPropertiesCount = PutOnLuaStack(L, propertyValue);
+        return indexedPropertiesCount;
     }
 
-    luaL_error(L, "could not index type [%s] by key [%s]", typeName, key);
-    return 0;
+    printf("getting uservalue (i.e. table) for userdata on index [%d]\n", userdataIndex);
+    lua_getuservalue(L, userdataIndex);
+
+    printf("getting key for value in table on index [%d]\n", keyIndex);
+    lua_pushvalue(L, keyIndex);
+
+    printf("getting value on key in table\n");
+    lua_gettable(L, -2);
+
+    printf("returning value found on key on index [%d] in uservalue (i.e. table) on index [%d]\n", keyIndex, userdataIndex);
+    int indexedValuesCount = 1;
+    return indexedValuesCount;
+}
+
+int NewIndexType(lua_State* L)
+{
+    printf("indexing type by unknown key from lua\n");
+
+    const char* typeName = (const char*) lua_tostring(L, lua_upvalueindex(1));
+    const rttr::type& type = rttr::type::get_by_name(typeName);
+    printf("indexing type [%s] by unknown key\n", typeName);
+
+    constexpr int bottomOfLuaStackIndex = 1;
+    int userdataIndex = bottomOfLuaStackIndex;
+    int keyIndex = userdataIndex + 1;
+    int valueIndex = keyIndex + 1;
+
+    if (!lua_isuserdata(L, userdataIndex))
+    {
+        luaL_error(L, "expected userdata on lua index [%d] when indexing type [%s]\n", userdataIndex, typeName);
+    }
+    if (!lua_isstring(L, keyIndex))
+    {
+        luaL_error(L, "expected name of a native property or method on lua index [%d] when indexing type [%s]\n", keyIndex, typeName);
+    }
+
+    printf("getting uservalue (i.e. table) for userdata on index [%d]\n", userdataIndex);
+    lua_getuservalue(L, userdataIndex);
+
+    printf("getting key for value in table on index [%d]\n", keyIndex);
+    lua_pushvalue(L, keyIndex);
+
+    printf("getting value on key in table on index [%d]\n", valueIndex);
+    lua_pushvalue(L, valueIndex);
+
+    printf("setting value on index [%d] on key on index [%d] on uservalue (i.e. table) on index [%d]\n", valueIndex, keyIndex, userdataIndex);
+    lua_settable(L, -3);
+
+    int valuesIndexedCount = 1;
+    return valuesIndexedCount;
 }
 
 int main()
@@ -379,6 +429,13 @@ int main()
             lua_pushcclosure(L, IndexType, indexUpvalueCount);
             lua_settable(L, -3);
             //printf("added index function with upvalue [%s] to metatable [%s]\n", typeName.c_str(), metatableName.c_str());
+
+            lua_pushstring(L, "__newindex");
+            lua_pushstring(L, typeName.c_str());
+            constexpr int newindexUpvalueCount = 1;
+            lua_pushcclosure(L, NewIndexType, newindexUpvalueCount);
+            lua_settable(L, -3);
+            //printf("added newindex function with upvalue [%s] to metatable [%s]\n", typeName.c_str(), metatableName.c_str());
         }
     }
 
@@ -389,11 +446,15 @@ int main()
         local sprite = Sprite.new()
         sprite:Draw()
 
-        local distance = sprite:Move(3, 4)
-        sprite:Move(distance, 12)
+        local distance = sprite:Move(1, 1)
+        sprite:Move(distance, 10)
 
         local x = sprite.x
         sprite:Move(x, 10)
+
+        sprite.z = 100
+        local z = sprite.z
+        sprite:Move(z, 10)
     )";
 
     if (luaL_dostring(L, script) != LUA_OK)
