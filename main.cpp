@@ -428,6 +428,42 @@ int NewIndexType(lua_State* L)
     return valuesIndexedCount;
 }
 
+int PutFunctionArgumentsOnLuaStack(lua_State* L)
+{
+    return 0;
+}
+
+template<typename T>
+int PutFunctionArgumentsOnLuaStack(lua_State* L, T argument)
+{
+    rttr::variant variant(argument);
+    return PutOnLuaStack(L, variant);
+}
+
+template<typename T, typename... E>
+int PutFunctionArgumentsOnLuaStack(lua_State* L, T argument, E... arguments)
+{
+    return PutFunctionArgumentsOnLuaStack(L, argument) + PutFunctionArgumentsOnLuaStack(L, arguments...);
+}
+
+template<typename... T>
+void CallFunction(lua_State* L, const char* functionName, T... arguments)
+{
+    lua_getglobal(L, functionName);
+    int functionIndex = -1;
+    if (lua_type(L, functionIndex) != LUA_TFUNCTION)
+    {
+        luaL_error(L, "expected function [%s] on lua stack index [%d]\n", functionName, functionIndex);
+    }
+    int argumentCount = PutFunctionArgumentsOnLuaStack(L, arguments...);
+    constexpr int resultsCount = 0;
+    constexpr int messageHandlerIndex = 0;
+    if (lua_pcall(L, argumentCount, resultsCount, messageHandlerIndex) != LUA_OK)
+    {
+        luaL_error(L, "could not call function [%s] on lua stack index [%d]\n", functionName, functionIndex);
+    }
+}
+
 int main()
 {
     lua_State* L = luaL_newstate();
@@ -506,12 +542,28 @@ int main()
 
         sprite.x = 0
         sprite:Move(sprite.x, 10)
+
+        function Foo(x, y)
+            Global.HelloWorldWithArguments(x, y)
+        end
+
+        function Bar(x)
+            Global.HelloWorldWithArguments(x, x)
+        end
+
+        function Asd()
+            Global.HelloWorldWithArguments(0, 0)
+        end
     )";
 
     if (luaL_dostring(L, script) != LUA_OK)
     {
         luaL_error(L, "Error: %s\n", lua_tostring(L, -1));
     }
+
+    CallFunction(L, "Foo", 1, 2);
+    CallFunction(L, "Bar", 1);
+    CallFunction(L, "Asd");
 
     return 0;
 }
