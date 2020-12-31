@@ -3,7 +3,7 @@ project(lua_demo)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(lua_demo main.cpp printlua.cpp LuaBinding.cpp LuaBinding.h)
+add_executable(lua_demo main.cpp printlua.cpp)
 
 set(LUA_NAME lua)
 set(LUA_DIR lib/lua-5.4.0)

@@ -1,4 +1,3 @@
-#include "LuaBinding.h"
 #include <lua/lua.hpp>
 #include <rttr/registration>
 #include <iostream>
@@ -68,7 +67,7 @@ union ArgumentValue
     const char* stringValue;
 };
 
-int CreateType(lua_State* L, const rttr::variant& variant);
+int CreateUserdata(lua_State* L, const rttr::variant& variant);
 
 int PutOnLuaStack(lua_State* L, const rttr::variant& variant)
 {
@@ -87,7 +86,7 @@ int PutOnLuaStack(lua_State* L, const rttr::variant& variant)
         }
         else if (variant.get_type().is_class() || variant.get_type().is_pointer())
         {
-            returnValueCount = CreateType(L, variant);
+            returnValueCount = CreateUserdata(L, variant);
         }
         else
         {
@@ -211,7 +210,7 @@ int InvokeGlobalMethod(lua_State* L)
     const std::string& methodName = method.get_name().to_string();
     printf("invoking global method [%s]\n", methodName.c_str());
 
-    const rttr::instance& instance = {};
+    rttr::instance instance;
     return InvokeMethod(L, method, instance);
 }
 
@@ -229,16 +228,16 @@ std::string GetMetatableName(const rttr::type& type)
     return typeName.append("__metatable");
 }
 
-int CreateType(lua_State* L)
+int CreateUserdata(lua_State* L)
 {
-    printf("creating native type from lua\n");
+    printf("creating userdata (i.e. native type) from lua\n");
 
     const auto& type = *(rttr::type*) lua_touserdata(L, lua_upvalueindex(1));
     const std::string& typeName = type.get_name().to_string();
-    printf("creating type [%s]\n", typeName.c_str());
+    printf("creating userdata for type [%s]\n", typeName.c_str());
 
-    void* userData = lua_newuserdata(L, sizeof(rttr::variant));
-    new(userData) rttr::variant(type.create());
+    void* userdata = lua_newuserdata(L, sizeof(rttr::variant));
+    new(userdata) rttr::variant(type.create());
     int userdataIndex = lua_gettop(L);
     printf("created userdata on lua index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
 
@@ -255,7 +254,7 @@ int CreateType(lua_State* L)
     return createdCount;
 }
 
-int CreateType(lua_State* L, const rttr::variant& variant)
+int CreateUserdata(lua_State* L, const rttr::variant& variant)
 {
     printf("creating native type from lua\n");
 
@@ -263,8 +262,8 @@ int CreateType(lua_State* L, const rttr::variant& variant)
     const std::string& typeName = type.get_name().to_string();
     printf("creating type [%s]\n", typeName.c_str());
 
-    void* userData = lua_newuserdata(L, sizeof(rttr::variant));
-    new(userData) rttr::variant(variant);
+    void* userdata = lua_newuserdata(L, sizeof(rttr::variant));
+    new(userdata) rttr::variant(variant);
     int userdataIndex = lua_gettop(L);
     printf("created userdata on lua index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
 
@@ -281,7 +280,7 @@ int CreateType(lua_State* L, const rttr::variant& variant)
     return createdCount;
 }
 
-int DestroyType(lua_State* L)
+int DestroyUserdata(lua_State* L)
 {
     printf("destroying native type from lua\n");
     const auto& variant = *(rttr::variant*) lua_touserdata(L, -1);
@@ -290,35 +289,35 @@ int DestroyType(lua_State* L)
     return 0;
 }
 
-int InvokeMethodOnType(lua_State* L)
+int InvokeMethodOnUserdata(lua_State* L)
 {
-    printf("invoking method on type\n");
+    printf("invoking method on userdata\n");
 
     auto& method = *(rttr::method*) lua_touserdata(L, lua_upvalueindex(1));
     const std::string& methodName = method.get_name().to_string();
-    printf("invoking method [%s] on type\n", methodName.c_str());
+    printf("invoking method [%s] on userdata\n", methodName.c_str());
 
     constexpr int bottomOfLuaStackIndex = 1;
     int userdataIndex = bottomOfLuaStackIndex;
     if (!lua_isuserdata(L, userdataIndex))
     {
-        luaL_error(L, "expected userdata on lua index [%d] when invoking method [%s] on type\n", userdataIndex, methodName.c_str());
+        luaL_error(L, "expected userdata on lua index [%d] when invoking method [%s]\n", userdataIndex, methodName.c_str());
     }
     const auto& variant = *(rttr::variant*) lua_touserdata(L, userdataIndex);
     const std::string& typeName = variant.get_type().get_name().to_string();
-    printf("invoking method [%s] on type [%s]\n", methodName.c_str(), typeName.c_str());
+    printf("invoking method [%s] on userdata of type [%s]\n", methodName.c_str(), typeName.c_str());
 
     rttr::instance instance(variant);
     return InvokeMethod(L, method, instance);
 }
 
-int IndexType(lua_State* L)
+int IndexUserdata(lua_State* L)
 {
-    printf("indexing type from lua\n");
+    printf("indexing userdata from lua\n");
 
     const char* typeName = (const char*) lua_tostring(L, lua_upvalueindex(1));
     const rttr::type& type = rttr::type::get_by_name(typeName);
-    printf("indexing type [%s]\n", typeName);
+    printf("indexing userdata of type [%s]\n", typeName);
 
     constexpr int bottomOfLuaStackIndex = 1;
     int userdataIndex = bottomOfLuaStackIndex;
@@ -326,29 +325,29 @@ int IndexType(lua_State* L)
 
     if (!lua_isuserdata(L, userdataIndex))
     {
-        luaL_error(L, "expected userdata on lua index [%d] when indexing type [%s]\n", userdataIndex, typeName);
+        luaL_error(L, "expected userdata on lua index [%d] when indexing userdata of type [%s]\n", userdataIndex, typeName);
     }
     if (!lua_isstring(L, keyIndex))
     {
-        luaL_error(L, "expected name of a native property or method on lua index [%d] when indexing type [%s]\n", keyIndex, typeName);
+        luaL_error(L, "expected name of a native property or method on lua index [%d] when indexing userdata of type [%s]\n", keyIndex, typeName);
     }
 
     const char* key = lua_tostring(L, keyIndex);
-    printf("indexing type [%s] by key [%s]\n", typeName, key);
+    printf("indexing userdata of type [%s] by key [%s]\n", typeName, key);
 
     const rttr::method& method = type.get_method(key);
     if (method.is_valid())
     {
         const std::string& methodName = method.get_name().to_string();
-        printf("found method [%s] to invoke on type [%s]\n", methodName.c_str(), typeName);
+        printf("found method [%s] to invoke on userdata of type [%s]\n", methodName.c_str(), typeName);
 
         void* methodUserdata = lua_newuserdata(L, sizeof(rttr::method));
         new(methodUserdata) rttr::method(method);
-        printf("created userdata for method [%s] to be invoked on type [%s]\n", methodName.c_str(), typeName);
+        printf("created userdata for method [%s] to be invoked on userdata of type [%s]\n", methodName.c_str(), typeName);
 
         constexpr int upvalueCount = 1;
-        lua_pushcclosure(L, InvokeMethodOnType, upvalueCount);
-        printf("returning closure with method [%s] to be invoked on type [%s] as upvalue\n", methodName.c_str(), typeName);
+        lua_pushcclosure(L, InvokeMethodOnUserdata, upvalueCount);
+        printf("returning closure with method [%s] to be invoked on userdata of type [%s] as upvalue\n", methodName.c_str(), typeName);
 
         int indexedMethodsCount = 1;
         return indexedMethodsCount;
@@ -358,12 +357,12 @@ int IndexType(lua_State* L)
     if (property.is_valid())
     {
         const std::string& propertyName = property.get_name().to_string();
-        printf("found property [%s] to read from type [%s]\n", propertyName.c_str(), typeName);
+        printf("found property [%s] to read from userdata of type [%s]\n", propertyName.c_str(), typeName);
 
         const rttr::variant& instance = *(rttr::variant*) lua_touserdata(L, bottomOfLuaStackIndex);
         const rttr::variant& propertyValue = property.get_value(instance);
         const std::string& propertyValueType = propertyValue.get_type().get_name().to_string();
-        printf("reading property [%s] of type [%s] from type [%s]\n", propertyName.c_str(), propertyValueType.c_str(), typeName);
+        printf("reading property [%s] of type [%s] from userdata of type [%s]\n", propertyName.c_str(), propertyValueType.c_str(), typeName);
 
         int indexedPropertiesCount = PutOnLuaStack(L, propertyValue);
         return indexedPropertiesCount;
@@ -383,7 +382,7 @@ int IndexType(lua_State* L)
     return indexedValuesCount;
 }
 
-int NewIndexType(lua_State* L)
+int NewIndexOnUserdata(lua_State* L)
 {
     printf("indexing type by unknown key from lua\n");
 
@@ -498,7 +497,7 @@ int PutMethodArgumentsOnLuaStack(lua_State* L, T& argument, E& ... arguments)
 }
 
 template<typename... T>
-void CallMethod(lua_State* L, const char* methodName, T& ... arguments)
+void CallLuaMethod(lua_State* L, const char* methodName, T& ... arguments)
 {
     lua_getglobal(L, methodName);
     int methodIndex = -1;
@@ -515,7 +514,7 @@ void CallMethod(lua_State* L, const char* methodName, T& ... arguments)
     }
 }
 
-lua_State* CreateState()
+lua_State* CreateLuaState()
 {
     lua_State* L = luaL_newstate();
 
@@ -545,7 +544,7 @@ lua_State* CreateState()
 
             lua_pushlightuserdata(L, (void*) &type);
             constexpr int newUpvalueCount = 1;
-            lua_pushcclosure(L, CreateType, newUpvalueCount);
+            lua_pushcclosure(L, CreateUserdata, newUpvalueCount);
             lua_setfield(L, -2, "new");
             //printf("added new/create function with upvalue [%s]\n", typeName.c_str());
 
@@ -554,21 +553,21 @@ lua_State* CreateState()
             //printf("created metatable [%s]\n", metatableName.c_str());
 
             lua_pushstring(L, "__gc");
-            lua_pushcfunction(L, DestroyType);
+            lua_pushcfunction(L, DestroyUserdata);
             lua_settable(L, -3);
             //printf("added garbage collect function to metatable [%s]\n", metatableName.c_str());
 
             lua_pushstring(L, "__index");
             lua_pushstring(L, typeName.c_str());
             constexpr int indexUpvalueCount = 1;
-            lua_pushcclosure(L, IndexType, indexUpvalueCount);
+            lua_pushcclosure(L, IndexUserdata, indexUpvalueCount);
             lua_settable(L, -3);
             //printf("added index function with upvalue [%s] to metatable [%s]\n", typeName.c_str(), metatableName.c_str());
 
             lua_pushstring(L, "__newindex");
             lua_pushstring(L, typeName.c_str());
             constexpr int newindexUpvalueCount = 1;
-            lua_pushcclosure(L, NewIndexType, newindexUpvalueCount);
+            lua_pushcclosure(L, NewIndexOnUserdata, newindexUpvalueCount);
             lua_settable(L, -3);
             //printf("added newindex function with upvalue [%s] to metatable [%s]\n", typeName.c_str(), metatableName.c_str());
         }
@@ -577,7 +576,7 @@ lua_State* CreateState()
     return L;
 }
 
-void Load(lua_State* L, const char* script)
+void LoadLuaScript(lua_State* L, const char* script)
 {
     if (luaL_loadstring(L, script) != LUA_OK)
     {
@@ -585,7 +584,7 @@ void Load(lua_State* L, const char* script)
     }
 }
 
-void Run(lua_State* L)
+void RunLua(lua_State* L)
 {
     constexpr int argumentCount = 0;
     constexpr int resultCount = LUA_MULTRET;
@@ -596,7 +595,7 @@ void Run(lua_State* L)
     }
 }
 
-const char* script = R"(
+const char* LUA_SCRIPT = R"(
         Global.HelloWorld()
         Global.HelloWorldWithArguments(66, 99)
 
@@ -636,21 +635,21 @@ const char* script = R"(
 
 int main()
 {
-    lua_State* L = CreateState();
+    lua_State* L = CreateLuaState();
 
-    Load(L, script);
-    Run(L);
+    LoadLuaScript(L, LUA_SCRIPT);
+    RunLua(L);
 
     int i = 1;
     int j = 2;
-    CallMethod(L, "Foo", i, j);
-    CallMethod(L, "Bar", i);
-    CallMethod(L, "Asd");
+    CallLuaMethod(L, "Foo", i, j);
+    CallLuaMethod(L, "Bar", i);
+    CallLuaMethod(L, "Asd");
 
     Sprite sprite;
     sprite.x = 100;
-    CallMethod(L, "Update", sprite);
-    CallMethod(L, "Update", sprite);
+    CallLuaMethod(L, "Update", sprite);
+    CallLuaMethod(L, "Update", sprite);
 
     return 0;
 }
