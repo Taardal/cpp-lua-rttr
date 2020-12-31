@@ -68,6 +68,8 @@ union ArgumentValue
     const char* stringValue;
 };
 
+int CreateType(lua_State* L, const rttr::variant& variant);
+
 int PutOnLuaStack(lua_State* L, const rttr::variant& variant)
 {
     const std::string& typeName = variant.get_type().get_name().to_string();
@@ -82,6 +84,10 @@ int PutOnLuaStack(lua_State* L, const rttr::variant& variant)
             printf("pushing [%d] onto lua stack\n", value);
             lua_pushnumber(L, value);
             returnValueCount++;
+        }
+        else if (variant.get_type().is_class() || variant.get_type().is_pointer())
+        {
+            returnValueCount = CreateType(L, variant);
         }
         else
         {
@@ -211,7 +217,16 @@ int InvokeGlobalMethod(lua_State* L)
 
 std::string GetMetatableName(const rttr::type& type)
 {
-    return type.get_name().to_string().append("__metatable");
+    std::string typeName;
+    if (type.is_pointer())
+    {
+        typeName = type.get_raw_type().get_name().to_string();
+    }
+    else
+    {
+        typeName = type.get_name().to_string();
+    }
+    return typeName.append("__metatable");
 }
 
 int CreateType(lua_State* L)
@@ -224,6 +239,32 @@ int CreateType(lua_State* L)
 
     void* userData = lua_newuserdata(L, sizeof(rttr::variant));
     new(userData) rttr::variant(type.create());
+    int userdataIndex = lua_gettop(L);
+    printf("created userdata on lua index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
+
+    const std::string& metatableName = GetMetatableName(type);
+    luaL_getmetatable(L, metatableName.c_str());
+    lua_setmetatable(L, userdataIndex);
+    printf("bound metatable [%s] to userdata on lua index [%d] for type [%s]\n", metatableName.c_str(), userdataIndex, typeName.c_str());
+
+    lua_newtable(L);
+    lua_setuservalue(L, userdataIndex);
+    printf("bound a new table to userdata on lua index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
+
+    constexpr int createdCount = 1;
+    return createdCount;
+}
+
+int CreateType(lua_State* L, const rttr::variant& variant)
+{
+    printf("creating native type from lua\n");
+
+    rttr::type type = variant.get_type();
+    const std::string& typeName = type.get_name().to_string();
+    printf("creating type [%s]\n", typeName.c_str());
+
+    void* userData = lua_newuserdata(L, sizeof(rttr::variant));
+    new(userData) rttr::variant(variant);
     int userdataIndex = lua_gettop(L);
     printf("created userdata on lua index [%d] for type [%s]\n", userdataIndex, typeName.c_str());
 
@@ -377,7 +418,8 @@ int NewIndexType(lua_State* L)
 
         int valueLuaType = lua_type(L, valueIndex);
         const char* valueLuaTypeName = lua_typename(L, valueLuaType);
-        printf("writing value of lua type [%d: %s] to property [%s] on instance of type [%s]\n", valueLuaType, valueLuaTypeName, propertyName.c_str(), instanceTypeName.c_str());
+        printf("writing value of lua type [%d: %s] to property [%s] on instance of type [%s]\n", valueLuaType, valueLuaTypeName, propertyName.c_str(),
+               instanceTypeName.c_str());
 
         bool didSetValueOnProperty = false;
         if (valueLuaType == LUA_TNUMBER)
@@ -428,43 +470,52 @@ int NewIndexType(lua_State* L)
     return valuesIndexedCount;
 }
 
-int PutFunctionArgumentsOnLuaStack(lua_State* L)
+int PutMethodArgumentsOnLuaStack(lua_State* L)
 {
     return 0;
 }
 
 template<typename T>
-int PutFunctionArgumentsOnLuaStack(lua_State* L, T argument)
+int PutMethodArgumentsOnLuaStack(lua_State* L, T& argument)
 {
-    rttr::variant variant(argument);
-    return PutOnLuaStack(L, variant);
+    const rttr::type& type = rttr::type::get<T>();
+    if (type.is_class())
+    {
+        rttr::variant variant(&argument);
+        return PutOnLuaStack(L, variant);
+    }
+    else
+    {
+        rttr::variant variant(argument);
+        return PutOnLuaStack(L, variant);
+    }
 }
 
 template<typename T, typename... E>
-int PutFunctionArgumentsOnLuaStack(lua_State* L, T argument, E... arguments)
+int PutMethodArgumentsOnLuaStack(lua_State* L, T& argument, E& ... arguments)
 {
-    return PutFunctionArgumentsOnLuaStack(L, argument) + PutFunctionArgumentsOnLuaStack(L, arguments...);
+    return PutMethodArgumentsOnLuaStack(L, argument) + PutMethodArgumentsOnLuaStack(L, arguments...);
 }
 
 template<typename... T>
-void CallFunction(lua_State* L, const char* functionName, T... arguments)
+void CallMethod(lua_State* L, const char* methodName, T& ... arguments)
 {
-    lua_getglobal(L, functionName);
-    int functionIndex = -1;
-    if (lua_type(L, functionIndex) != LUA_TFUNCTION)
+    lua_getglobal(L, methodName);
+    int methodIndex = -1;
+    if (lua_type(L, methodIndex) != LUA_TFUNCTION)
     {
-        luaL_error(L, "expected function [%s] on lua stack index [%d]\n", functionName, functionIndex);
+        luaL_error(L, "expected method [%s] on lua stack index [%d]", methodName, methodIndex);
     }
-    int argumentCount = PutFunctionArgumentsOnLuaStack(L, arguments...);
+    int argumentCount = PutMethodArgumentsOnLuaStack(L, arguments...);
     constexpr int resultsCount = 0;
     constexpr int messageHandlerIndex = 0;
     if (lua_pcall(L, argumentCount, resultsCount, messageHandlerIndex) != LUA_OK)
     {
-        luaL_error(L, "could not call function [%s] on lua stack index [%d]\n", functionName, functionIndex);
+        luaL_error(L, "could not call method [%s] on lua stack index [%d]: %s", methodName, methodIndex, lua_tostring(L, -1));
     }
 }
 
-int main()
+lua_State* CreateState()
 {
     lua_State* L = luaL_newstate();
 
@@ -523,7 +574,29 @@ int main()
         }
     }
 
-    const char* script = R"(
+    return L;
+}
+
+void Load(lua_State* L, const char* script)
+{
+    if (luaL_loadstring(L, script) != LUA_OK)
+    {
+        luaL_error(L, "could not load lua script: %s", lua_tostring(L, -1));
+    }
+}
+
+void Run(lua_State* L)
+{
+    constexpr int argumentCount = 0;
+    constexpr int resultCount = LUA_MULTRET;
+    constexpr int messageHandlerIndex = 0;
+    if (lua_pcall(L, argumentCount, resultCount, messageHandlerIndex) != LUA_OK)
+    {
+        luaL_error(L, "could not run lua with loaded script: %s", lua_tostring(L, -1));
+    }
+}
+
+const char* script = R"(
         Global.HelloWorld()
         Global.HelloWorldWithArguments(66, 99)
 
@@ -554,16 +627,30 @@ int main()
         function Asd()
             Global.HelloWorldWithArguments(0, 0)
         end
+
+        function Update(sprite)
+            sprite.x = sprite.x + 10
+            sprite:Move(0, 5)
+        end
     )";
 
-    if (luaL_dostring(L, script) != LUA_OK)
-    {
-        luaL_error(L, "Error: %s\n", lua_tostring(L, -1));
-    }
+int main()
+{
+    lua_State* L = CreateState();
 
-    CallFunction(L, "Foo", 1, 2);
-    CallFunction(L, "Bar", 1);
-    CallFunction(L, "Asd");
+    Load(L, script);
+    Run(L);
+
+    int i = 1;
+    int j = 2;
+    CallMethod(L, "Foo", i, j);
+    CallMethod(L, "Bar", i);
+    CallMethod(L, "Asd");
+
+    Sprite sprite;
+    sprite.x = 100;
+    CallMethod(L, "Update", sprite);
+    CallMethod(L, "Update", sprite);
 
     return 0;
 }
